@@ -5,20 +5,63 @@ import type { Point, Quad } from '../types/geometry'
 // internally and keep our own functions' public signatures strongly typed instead.
 let cvPromise: Promise<any> | null = null
 
+function loadScript(src: string): Promise<void> {
+  return new Promise((resolve, reject) => {
+    if (typeof document === 'undefined') return reject(new Error('DOM not available'))
+    const existing = document.querySelector(`script[src="${src}"]`)
+    if (existing) {
+      if ((window as any).cv) return resolve()
+      existing.addEventListener('load', () => resolve())
+      existing.addEventListener('error', () => reject(new Error(`Failed to load ${src}`)))
+      return
+    }
+    const script = document.createElement('script')
+    script.src = src
+    script.async = true
+    script.onload = () => resolve()
+    script.onerror = () => reject(new Error(`Failed to load ${src}`))
+    document.head.appendChild(script)
+  })
+}
+
 async function getCv(): Promise<any> {
   if (!cvPromise) {
     cvPromise = (async () => {
-      const mod = await import('@techstark/opencv-js')
-      const cvModule: any = mod.default ?? mod
-      if (cvModule instanceof Promise) {
-        return cvModule
+      // 1. If window.cv is not yet present on the page, load it via script
+      if (typeof window !== 'undefined' && !(window as any).cv) {
+        try {
+          await loadScript('/opencv.js')
+        } catch {
+          // Fallback to CDN if local /opencv.js fails to load
+          await loadScript('https://cdn.jsdelivr.net/npm/@techstark/opencv-js@5.0.0-release.1/dist/opencv.js')
+        }
       }
-      if (cvModule.Mat) {
-        return cvModule
+
+      let cvModule: any = typeof window !== 'undefined' ? (window as any).cv : null
+      if (!cvModule) {
+        throw new Error('OpenCV.js runtime not found.')
       }
-      await new Promise<void>((resolve) => {
-        cvModule.onRuntimeInitialized = () => resolve()
-      })
+
+      // 2. If cvModule is a Promise or Thenable, await it
+      if (typeof cvModule.then === 'function') {
+        cvModule = await cvModule
+      }
+
+      // 3. Wait for Emscripten runtime initialization if Mat is not ready yet
+      if (!cvModule.Mat) {
+        await new Promise<void>((resolve) => {
+          if (cvModule.Mat) {
+            resolve()
+            return
+          }
+          const prev = cvModule.onRuntimeInitialized
+          cvModule.onRuntimeInitialized = () => {
+            if (typeof prev === 'function') prev()
+            resolve()
+          }
+        })
+      }
+
       return cvModule
     })()
   }
@@ -27,15 +70,15 @@ async function getCv(): Promise<any> {
 
 /** Call once (e.g. on app start) to warm up the ~13 MB OpenCV.js runtime in the background. */
 export function preloadCv(): void {
-  void getCv().catch(() => {
-    // ignored — detection will simply report "unavailable" when actually invoked
+  void getCv().catch((err) => {
+    console.warn('OpenCV preload deferred or failed:', err)
   })
 }
 
 export async function isCvAvailable(): Promise<boolean> {
   try {
-    await getCv()
-    return true
+    const cv = await getCv()
+    return !!cv?.Mat
   } catch {
     return false
   }

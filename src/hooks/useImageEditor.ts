@@ -94,7 +94,8 @@ export function useImageEditor() {
         } else {
           updateEdit(id, { documentCorners: null, scanStatus: 'needs-review' }, { commit: false })
         }
-      } catch {
+      } catch (err) {
+        console.warn('Auto document scan encountered an error, falling back to manual review:', err)
         // OpenCV failed to load or threw — never block the workflow, just ask for manual review
         updateEdit(id, { documentCorners: null, scanStatus: 'needs-review' }, { commit: false })
       }

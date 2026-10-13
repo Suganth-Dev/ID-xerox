@@ -119,7 +119,8 @@ export async function renderEditedCanvas(blob: Blob, edit: ImageEditState): Prom
       base = await warpDocument(blob, edit.documentCorners)
       baseWidth = base.width
       baseHeight = base.height
-    } catch {
+    } catch (err) {
+      console.warn('Perspective correction failed, falling back to unwarped photo:', err)
       // perspective correction failed (e.g. OpenCV unavailable) — fall back to the unwarped photo
       base = await createImageFromBlob(blob)
       baseWidth = base.naturalWidth
